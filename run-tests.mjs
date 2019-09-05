@@ -56,16 +56,11 @@ async function runTest(name, compile = compileWithHostScheme) {
     // Set up mjs tests
     const testModule = testModules[name];
 
-    try {
-        if(testModule) {
-            testModule.test(wasm, engine, assert);
-        } else {
-            const result = wasm.call('do-test');
-            assert.ok(result != false, "test failed");
-        }
-    } catch (e) {
-        console.error(e.stack);
-        throw e;
+    if (testModule) {
+        testModule.test(wasm, engine, assert);
+    } else {
+        const result = wasm.call('do-test');
+        assert.ok(result != false, "test failed");
     }
 }
 
@@ -74,45 +69,41 @@ async function getTests() {
         return process.argv.slice(2);
     } else {
         let files = await util.promisify(fs.readdir)('test');
-        return (function* () {
-            for (const name of files) {
-                yield `test/${name}`;
-            }
-        })();
+	return files.map(file => `test/${file}`);
     }
 }
 
 async function runTests() {
     let failures = [];
     const files = await getTests();
-    for (const test of files) {
+    await Promise.all(files.map(async test => {
         if (test.endsWith(".ss")) {
             let local_failures = [];
             console.info(`Running test ${test}`);
             async function run_stage(name, compile) {
                 try {
                     await runTest(test, compile);
-                    console.info(`  ${name} succeeded`);
+                    console.info(`${name} passed ${test}`);
                 } catch (e) {
-                    console.info(`  ${name} FAILED`);
-                    console.info(e.stack);
+                    console.info(`${name} FAILED ${test}`);
+                    console.error(e.stack);
                     local_failures.push([name]);
                 }
             }
             if (OPTIONS.stage0) {
-                await run_stage("stage0", stage0_compile);
+                run_stage("stage0", stage0_compile);
             }
             if (OPTIONS.stage1) {
-                await run_stage("stage1", stage1_compile);
+                run_stage("stage1", stage1_compile);
             }
             if (OPTIONS.stage2) {
-                await run_stage("stage2", stage2_compile);
+                run_stage("stage2", stage2_compile);
             }
             if (local_failures.length > 0) {
                 failures.push([test, local_failures]);
             }
         }
-    }
+    }));
     return failures;
 }
 
