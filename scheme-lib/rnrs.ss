@@ -19,7 +19,10 @@
           equal? fold-left fold-right integer->char length list->string list-ref
           list-tail list? map max newline null? peek-char read read-char
           string->list string->symbol string=? symbol->string string-append
-          symbol? write write-char zero?)
+          symbol? write write-char zero?
+
+          even? odd?
+          )
   (import (schism))
 
   (define (display x)
@@ -328,18 +331,14 @@
      (else #f)))
   (define (zero? n)
     (eq? n 0))
+  (define (even? n)
+    (zero? (bitwise-and n 1)))
+  (define (odd? n)
+    (not (even? n)))
   (define (null? x)
     (eq? x '()))
-  (define (tortoise-hare tortoise hare)
-    (if (pair? hare)
-        (let ((hare (cdr hare)))
-          (if (pair? hare)
-              (and (not (eq? tortoise hare))
-                   (tortoise-hare (cdr tortoise) (cdr hare)))
-              (null? hare)))
-        (null? hare)))
   (define (list? x)
-    (tortoise-hare x x))
+    (or (pair? x) (null? x)))
   (define (boolean? p)
     (or (eq? p #t) (eq? p #f)))
   (define (symbol? p)
