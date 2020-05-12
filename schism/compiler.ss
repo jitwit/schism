@@ -46,6 +46,8 @@
     (fold-right (lambda (x ls) (if (pred x) (cons x ls) ls)) '() ls))
   (define (filter-out pred ls)
     (filter (lambda (x) (not (pred x))) ls))
+  (define (filter-map pred ls)
+    (fold-right (lambda (x ys) (let ((x (pred x))) (if x (cons x ys) ys))) '() ls))
   (define (and-map f ls)
     (or (null? ls) (and (f (car ls)) (and-map f (cdr ls)))))
   (define (or-map f ls)
@@ -332,7 +334,7 @@
     (let ((tag (car def)))
       (unless (eq? (car def) 'define)
         (trace-and-error def 'add-top-level "unmatched top-level declaration"))
-      (let ((name (caadr def)) (args (cdadr def)))
+      (let ((name (definition-name def)) (args (function-formals def)))
         (add-env name
                  (lambda ()
                    (let ((args (map rename-var args)))
@@ -391,6 +393,18 @@
       (unless pair
         (trace-and-error name 'lookup "unbound identifier"))
       ((cdr pair))))
+  
+  ;; parse
+  ;; def == (define (name args ...) body)
+  ;;      | (define name body)
+  ;; or return false
+  (define (definition-name def)
+    (and (pair? def)
+         (eq? (car def) 'define)
+         (pair? (cdr def))
+         (if (pair? (cadr def))
+             (caadr def)
+             (cadr def))))
 
   (define (make-export-environment lib)
     (let* ((name (cadr lib))
@@ -400,9 +414,8 @@
       (cons name
             (add-top-levels-filter
              (lambda (def)
-               ;; def == (define (name args ...) body ...)
-               (let ((name (caadr def)))
-                 (memq name exports)))
+               (let ((name (definition-name def)))
+                 (and name (memq name exports))))
              defs
              (empty-env)))))
 
@@ -462,21 +475,34 @@
   (define (parse-body body env)
     (unless (pair? body) (error 'parse-body "Empty body"))
     (parse-begin (parse-expr (car body) env) (cdr body) env))
+  (define (function-definition? def)
+    (and (pair? def)
+         (eq? (car def) 'define)
+         (pair? (cdr def))
+         (or (pair? (cadr def))
+             (and (pair? (cddr def))
+                  (pair? (caddr def))
+                  (eq? 'lambda (caaddr def))))))
+  (define (function-formals def)
+    (if (pair? (cadr def))
+        (cdadr def)
+        ;; otherwise assume (define fun (lambda (formals ...) body))
+        (car (cdaddr def))))
+  (define (function-body def)
+    (if (pair? (cadr def))
+        (cddr def)
+        ;; otherwise assume (define fun (lambda (formals ...) body))
+        (cdr (cdaddr def))))
   (define (parse-function function env)
-    (let ((type (car function)))
-      (cond
-       ((eq? 'define type)
-        (let* ((name (caadr function))
-               (args (cdadr function))
-               (args* (map rename-var args))
-               (body (parse-body (cddr function)
-                                 (add-lexicals args args* env))))
-          `(,(cons name args*) ,body)))
-       (else
-        (trace-and-error
-         function 'parse-function "invalid top-level declaration")))))
-  (define (parse-functions functions env)
-    (map (lambda (fn) (parse-function fn env)) functions))
+    (let* ((name (definition-name function))
+           (args (function-formals function))
+           (args* (map rename-var args))
+           (body (parse-body (function-body function)
+                             (add-lexicals args args* env))))
+      `(,(cons name args*) ,body)))
+  (define (parse-functions definitions env)
+    (map (lambda (fn) (parse-function fn env))
+         (filter function-definition? definitions)))
   (define (compute-imported-functions lib imports)
     (map (lambda (import) `(%wasm-import ,lib . ,import)) imports))
   (define (parse-library lib import-envs)
@@ -496,10 +522,14 @@
            (body-env (add-top-levels-filter
                       ;; Filter out names that are exported, since
                       ;; those have already been included.
+                      ;; def == (define (name args ...) body ...)
+                      ;;      | (define name body ...)
                       (lambda (def)
-                        (let ((name (caadr def)))
-                          (not (memq name exports))))
-                      defs body-env)))
+                        (and (function-definition? def)
+                             (let ((name (definition-name def)))
+                               (and name (not (memq name exports))))))
+                      defs
+                      body-env)))
       (cons exports
             (append (compute-imported-functions "rt" imports)
                     (parse-functions defs body-env)))))
