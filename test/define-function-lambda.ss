@@ -16,7 +16,7 @@
   (export do-test)
   (import (rnrs))
 
-  (define (f) #t)
+  (define f (lambda () #t))
   (define g (lambda (a) 'b))
   (define h (lambda (a b) b))
 
