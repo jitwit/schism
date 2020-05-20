@@ -29,6 +29,7 @@
   (define default cons) ;; (cons tag tree), ie (lambda x x)
   (define (const x y) y)
   (define node-tag car)
+  ;;;; macro definitions and quasiquotation
   (define (quasicons head tail)
     (if (and (pair? tail) (eq? (car tail) 'quote)
              (pair? (cdr tail)) (null? (cddr tail))
@@ -51,7 +52,7 @@
            (else
             (quasicons (expand-quasiquote head level)
                        (expand-quasiquote tail level)))))
-        `',expr))  
+        `',expr))
   (define (expand-or or tree)
     (cond
      ((null? tree) '#f)
@@ -59,12 +60,12 @@
      (else
       (let ((t (gensym "t")))
         `(let ((,t ,(car tree)))
-           (if ,t ,t (or . ,(cdr tree))))))))
+           (if ,t ,t ,(expand-or or (cdr tree))))))))
   (define (expand-and and tree)
     (cond
      ((null? tree) '#t)
      ((null? (cdr tree)) (car tree))
-     (else `(if ,(car tree) ,(and . (cdr tree)) #f))))
+     (else `(if ,(car tree) ,(expand-and and (cdr tree)) #f))))
   (define (expand-when when tree)
     `(if ,(car tree) (begin . ,(cdr tree)) (begin)))
   (define (expand-unless unless tree)
@@ -79,16 +80,31 @@
                 (e (cadar bindings))
                 (rest (cdr bindings)))
             `(let ((,x ,e))
-               (let* ,rest . ,(cdr tree)))))))
-  (define bindings
-    `((when *macro*   . ,expand-when)
-      (unless *macro* . ,expand-unless)
-      (or *macro*     . ,expand-or)
-      (and *macro*    . ,expand-and)
-      (not *macro*    . ,expand-not)
-      (let* *macro*   . ,expand-let*)
-      (*leaf*         . ,(lambda (tag leaf) leaf))
-      (*default*      . ,default)))
+               ,(expand-let* let* (cons rest (cdr tree))))))))
+  (define (expand-cond cond tree)
+    (let ((clause (car tree))
+          (rest (cdr tree)))
+      (cond ((eq? (car clause) 'else)
+             (unless (null? rest)
+               (error 'expand-cond "misplaced else keyword"))
+             `(begin . ,(cdr clause)))
+            (else
+             `(if ,(car clause)
+                  (begin . ,(cdr clause))
+                  (cond . ,rest))))))
+
+  ;;;; default macro bindings
+  (define *schism-macros*
+    `((quasiquote *macro* . ,(lambda (qq tree) (expand-quasiquote tree 0)))
+      (cond *macro*       . ,expand-cond)
+      (or *macro*         . ,expand-or)
+      (and *macro*        . ,expand-and)
+      (let* *macro*       . ,expand-let*)
+      (when *macro*       . ,expand-when)
+      (unless *macro*     . ,expand-unless)
+      (not *macro*        . ,expand-not)
+      (*leaf*             . ,(lambda (tag leaf) leaf))
+      (*default*          . ,default)))
 
   (define (pre-post-order tree bindings)
     (let ((default (assq '*default* bindings))
@@ -118,23 +134,41 @@
                  (leaf     (assq '*leaf* bindings)))
             ((cddr binding) trigger
              (walk (cdr tree) bindings leaf default)))))))))
-
   (define when-eg
     '(let ((x 2)) (when (= x 2) (display 'woohoo))))
   (define not-eg
     '(if (not #t) 'a 'b))
+  (define and-eg
+    '(and x y (or (cdr w) z)))
   (define or-eg
     '(or x `y z))
   (define let*-eg
     '(let* ((x 12) (y (+ x x)))
        (* y x)))
+  (define quasi-eg
+    '(let ((x '(1 2 3)))
+       `(,x 3 ,x)))
+  (define cond-eg
+    '(cond ((= x 1) "one")
+           ((= x 2) "two")
+           (else 'something)))
+  (define expr-eg
+    '((lambda (x) x) (lambda (x) x)))
   (define examples
-    `(,when-eg
-      ,not-eg
-      ,or-eg
-      ,let*-eg))
+    `((when . ,when-eg)
+      (not . ,not-eg)
+      (and . ,and-eg)
+      (or . ,or-eg)
+      (let* . ,let*-eg)
+      (quasiquote . ,quasi-eg)
+      (cond . ,cond-eg)
+      (other . ,expr-eg)))
+  (define (expand-macros expr)
+    (pre-post-order expr *schism-macros*))
   (define (do-test)
-    (map (lambda (prog)
-           (trace (pre-post-order prog bindings)))
+    (map (lambda (eg)
+           (newline)
+           (trace (cdr eg))
+           (trace (expand-macros (cdr eg))))
          examples)
     #t))
